@@ -1,6 +1,7 @@
 // Stream Tools Queue: lets the Stream Tools daemon (Twitch chat song requests) control TidaLunar.
 // It connects out to the daemon over a WebSocket, reports what is playing once a second, and runs commands it gets:
 //   {cmd:"playNext", ids:[trackId,...]}  {cmd:"next"}  {cmd:"play"}  {cmd:"pause"}   (each is answered with {event:"ack",cmd,ok,error})
+//   {cmd:"superseded"}  another copy of this plugin connected after this one: stop (a reload can leave an old copy running)
 // It never reads or sends your login; it only uses the player's own PlayState / MediaItem.
 const core = luna.core.modules["@luna/core"];
 const lib = luna.core.modules["@luna/lib"];
@@ -16,10 +17,12 @@ export const settings = await core.ReactiveStore.getPluginStorage("StreamtoolsQu
   debug: false,
 });
 
-let status = "off"; // off | connecting | connected | waiting
+const instance = Math.random().toString(36).slice(2, 8); // which copy of the plugin this is (a reload can leave an old copy running)
+let status = "off"; // off | connecting | connected | waiting | retired
 let socket = null;
 let timer = null;
 let alive = true;
+let retired = false; // another copy of this plugin took over: this one stays idle
 let lastError = "";
 const DEBUG = "http://127.0.0.1:18768/log";
 const say = (m) => { if (settings.debug) fetch(DEBUG, { method: "POST", body: String(m) }).catch(() => {}); };
@@ -47,7 +50,25 @@ async function snapshot() {
   };
 }
 
+function selfInfo() {
+  try {
+    const p = core.LunaPlugin.getByName?.("@curls/streamtools-queue");
+    return { url: p?.url ?? null, hash: p?.package?.hash ?? null };
+  } catch { return {}; }
+}
+
+function retire() {
+  retired = true;
+  clearInterval(tick);
+  clearTimeout(timer);
+  status = "retired";
+  try { socket?.close(); } catch {}
+  say("superseded by another copy of the plugin: retired");
+}
+
 async function run(msg) {
+  if (msg.cmd === "superseded") return retire();
+  if (retired) return;
   const ps = lib.PlayState;
   try {
     if (msg.cmd === "playNext") await ps.playNext(msg.ids.map(Number));
@@ -67,20 +88,20 @@ export function reconnect() {
   clearTimeout(timer);
   try { socket?.close(); } catch {}
   socket = null;
-  if (!alive) return;
+  if (!alive || retired) return;
   if (!settings.enabled) { status = "off"; return; }
   status = "connecting";
   let ws;
   try { ws = new WebSocket(settings.address); } catch (e) { status = "waiting"; lastError = String(e); timer = setTimeout(reconnect, 5000); return; }
   socket = ws;
-  ws.onopen = () => { status = "connected"; lastError = ""; send({ event: "hello", plugin: "streamtools-queue", version: 1 }); say("connected to " + settings.address); };
+  ws.onopen = () => { status = "connected"; lastError = ""; send({ event: "hello", plugin: "streamtools-queue", version: 2, instance, ...selfInfo() }); say("connected to " + settings.address); };
   ws.onmessage = (ev) => { try { run(JSON.parse(ev.data)); } catch (e) { say("bad message " + e); } };
-  ws.onclose = () => { if (socket === ws) { socket = null; if (alive && settings.enabled) { status = "waiting"; timer = setTimeout(reconnect, 3000); } } };
+  ws.onclose = () => { if (socket === ws) { socket = null; if (alive && !retired && settings.enabled) { status = "waiting"; timer = setTimeout(reconnect, 3000); } } };
   ws.onerror = () => { lastError = "cannot reach " + settings.address; };
 }
 
 const tick = setInterval(async () => {
-  if (status === "connected") send(await snapshot());
+  if (status === "connected" && !retired) send(await snapshot());
 }, 1000);
 
 unloads.add(() => { alive = false; clearInterval(tick); clearTimeout(timer); try { socket?.close(); } catch {} });
@@ -93,6 +114,7 @@ const STATUS_TEXT = {
   connecting: "Connecting...",
   connected: "Connected to the Stream Tools daemon",
   waiting: "Waiting for the Stream Tools daemon",
+  retired: "Idle: another copy of this plugin is connected (reload Luna to clear it)",
 };
 
 export const Settings = () => {

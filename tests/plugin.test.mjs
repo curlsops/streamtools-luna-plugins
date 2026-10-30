@@ -39,7 +39,11 @@ test("connects to the daemon address from its settings and says hello", async ()
   await wait(30);
   assert.equal(sockets.length, 1);
   assert.equal(sockets[0].url, "ws://127.0.0.1:18767");
-  assert.deepEqual(sockets[0].sent[0], { event: "hello", plugin: "streamtools-queue", version: 1 });
+  const hello = sockets[0].sent[0];
+  assert.equal(hello.event, "hello");
+  assert.equal(hello.plugin, "streamtools-queue");
+  assert.equal(hello.version, 2);
+  assert.match(hello.instance, /^[a-z0-9]{3,}$/, "each copy of the plugin identifies itself");
 });
 
 test("reports what is playing once a second", async () => {
@@ -77,6 +81,19 @@ test("runs commands and acknowledges them", async () => {
 test("the settings page has the status, switch, address and reconnect controls", () => {
   const titles = flatten(plugin.Settings()).filter((n) => n.props?.title).map((n) => n.props.title);
   assert.deepEqual(titles, ["Status", "Connect to Stream Tools", "Daemon address", "Reconnect", "Debug log"]);
+});
+
+test("a copy that is told it was superseded goes idle and does not reconnect", async () => {
+  const ws = sockets[0];
+  ws.onmessage({ data: JSON.stringify({ cmd: "superseded" }) });
+  await wait(50);
+  assert.equal(ws.readyState, 3, "retired copy must close its connection");
+  const before = ws.sent.length, count = sockets.length;
+  ws.onmessage({ data: JSON.stringify({ cmd: "next", id: 99 }) });
+  await wait(3500);
+  assert.equal(sockets.length, count, "a retired copy must not reconnect");
+  assert.equal(ws.sent.length, before, "a retired copy must not run commands or report");
+  assert.equal(calls.filter((c) => c[0] === "next").length, 1, "the earlier next only");
 });
 
 test("unloading stops the connection and the timers", async () => {
