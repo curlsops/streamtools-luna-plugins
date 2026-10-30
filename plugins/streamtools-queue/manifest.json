@@ -1,0 +1,8 @@
+{
+  "name": "@curls/streamtools-queue",
+  "description": "Lets Stream Tools (Twitch chat song requests) queue tracks in TidaLunar",
+  "homepage": "https://github.com/curlsops/streamtools-luna-plugins#streamtools-queue",
+  "author": { "name": "curls", "url": "https://github.com/curlsops", "avatarUrl": "https://avatars.githubusercontent.com/curlsops" },
+  "main": "./src/index.ts",
+  "type": "module"
+}

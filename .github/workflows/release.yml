@@ -1,0 +1,41 @@
+name: Test and release
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax check the plugins
+        run: for f in plugins/*/index.mjs; do node --check "$f"; done
+      - name: Plugin tests (fake Luna, fake WebSocket, fake player)
+        run: node --test tests/plugin.test.mjs
+      - name: Build tests
+        run: python3 tests/build.test.py
+
+  release:
+    # only after the tests passed, and only for a push to main
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/build.py
+      - name: Publish the rolling "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest dist/* --title "Latest" --notes "Plugin files Luna installs from. In Luna Settings > Plugin Store paste https://github.com/${{ github.repository }}/releases/download/latest/store.json"

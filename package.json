@@ -1,0 +1,8 @@
+{
+  "name": "streamtools-luna-plugins",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --check plugins/streamtools-queue/index.mjs && node --test tests/plugin.test.mjs && python3 tests/build.test.py"
+  }
+}
